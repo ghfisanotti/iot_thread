@@ -1,0 +1,302 @@
+esphome:
+  name: esp32-c6-lcd-2
+  friendly_name: esp32-c6-lcd-2
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "V2n+LB97bUfb4jbFBOQ29Y8Kk5ChPdHRJo2TFpoXP54="
+  on_client_connected:
+    - if:
+        condition:
+          lambda: 'return (0 == client_info.find("Home Assistant "));'
+        then:
+          - lvgl.page.show: pg_main
+  on_client_disconnected:
+    - if:
+        condition:
+          lambda: 'return (0 == client_info.find("Home Assistant "));'
+        then:
+          - lvgl.page.show: pg_offline
+
+ota:
+  - platform: esphome
+    password: "c89d83ae34779dc14571a7074df864b8"
+
+# For WiFi connection, uncomment wifi: and captive_portal components below
+#wifi:
+#  ssid: !secret wifi_ssid
+#  password: !secret wifi_password
+#  manual_ip:
+#    static_ip: 192.168.0.204
+#    gateway: 192.168.0.1
+#    subnet: 255.255.255.0
+#    dns1: 192.168.0.1
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+#  ap:
+#    ssid: "Esp32-C6-Lcd-2 Fallback Hotspot"
+#    password: "TbONNEYFd6uH"
+
+#captive_portal:
+
+# For Thread connection, uncomment network: and openthread: components below
+network:
+  enable_ipv6: True
+  
+openthread:
+  tlv: 0e080000000000010000000300000f4a0300001535060004001fffe00208dead00beef00cafe0708fd000db800a00000051000112233445566778899aabbccddeeff030e4f70656e5468726561642d455350010212340410104810e2315100afd6bc9215a6bfac530c0402a0f7f8
+
+web_server:
+
+# Only for Thread connected devices
+text_sensor:
+  - platform: openthread_info
+    ip_address:
+      name: "Thread IP Address"
+    channel:
+      name: "Thread Channel"
+    role:
+      name: "Thread Device Role"
+    rloc16:
+      name: "Thread RLOC16"
+    ext_addr:
+      name: "Thread Extended Address"
+    eui64:
+      name: "Thread EUI64"
+    network_name:
+      name: "Thread Network Name"
+    network_key:
+      name: "Thread Network Key"
+    pan_id:
+      name: "Thread PAN ID"
+    ext_pan_id:
+      name: "Thread Extended PAN ID"
+
+binary_sensor:
+   - platform: status
+     name: "Node Status"
+     id: system_status
+   - platform: gpio
+     pin:
+       number: GPIO9
+       inverted: true
+       mode:
+         input: true
+         pullup: true
+     name: "Button 0"
+     id: tdisplay_button_input_0
+
+time:
+  - platform: homeassistant
+    id: time_comp
+    timezone: "UTC+3"
+    on_time_sync:
+      - script.execute: time_update
+    on_time:
+      - minutes: '*'
+        seconds: 0
+        then:
+          - script.execute: time_update
+
+sensor:
+  - platform: homeassistant
+    id: temp1
+    entity_id: weather.forecast_cramer
+    attribute: temperature
+    accuracy_decimals: 2
+    on_value:
+      - lvgl.arc.update:
+          id: temp_arc
+          value: !lambda return x;
+      - lvgl.label.update:
+          id: temp_label
+          text:
+            format: "%.1f°C"
+            args: [ 'x' ]
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO6
+
+output:
+  - platform: ledc
+    pin: GPIO22
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: Display Backlight
+    id: display_backlight
+    restore_mode: RESTORE_AND_ON
+    
+  - platform: esp32_rmt_led_strip
+    name: "Onboard RGB LED"
+    pin: GPIO8
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: RGB
+
+script:
+  - id: time_update
+    then:
+      - lvgl.indicator.update:
+          id: minutes_hand
+          value: !lambda |-
+            return id(time_comp).now().minute;
+      - lvgl.indicator.update:
+          id: hours_hand
+          value: !lambda |-
+            auto now = id(time_comp).now();
+            return std::fmod(now.hour, 12) * 60 + now.minute;
+      - lvgl.label.update:
+          id: date_label
+          text: !lambda |-
+            static const char * const mon_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+            static char date_buf[8];
+            auto now = id(time_comp).now();
+            snprintf(date_buf, sizeof(date_buf), "%s %2d", mon_names[now.month-1], now.day_of_month);
+            return date_buf;
+      - lvgl.label.update:
+          id: day_label
+          text: !lambda |-
+            static const char * const day_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            return day_names[id(time_comp).now().day_of_week - 1];   
+
+display:
+  - platform: st7789v
+    model: WAVESHARE_1.47IN_172X320
+    cs_pin: GPIO14
+    dc_pin: GPIO15
+    reset_pin: GPIO21
+    rotation: 90
+    auto_clear_enabled: false
+    #update_interval: never
+
+lvgl:
+  buffer_size: 25%
+
+  pages:
+    - id: pg_offline
+      bg_color: black
+      widgets:
+        - label:
+            align: CENTER
+            text_color: red
+            text_font: montserrat_24
+            text: 'Offline...'
+
+    - id: pg_main
+      bg_color: black
+      widgets:
+        - obj: # thermometer container
+            width: 160
+            height: 130
+            align: TOP_LEFT
+            bg_color: black
+            border_width: 0
+            pad_all: 0
+            widgets:
+              - arc:
+                  id: temp_arc
+                  min_value: -5
+                  max_value: 45
+                  arc_color: blue
+                  align: CENTER
+                  widgets:
+                    - label:
+                        id: temp_label
+                        align: CENTER
+                        text_color: yellow
+                        text_font: montserrat_22
+        - obj: # clock container
+            id: clock_container
+            width: 160
+            height: 130
+            align: TOP_RIGHT
+            bg_color: black
+            border_width: 0
+            pad_all: 0
+            widgets:
+              - meter:
+                  align: CENTER
+                  bg_color: 0x101010
+                  border_width: 0
+                  text_color: gray
+                  scales:
+                    - range_from: 0 # minutes scale
+                      range_to: 60
+                      angle_range: 360
+                      rotation: 270
+                      ticks:
+                        count: 0
+                      indicators:
+                        - line:
+                            id: minutes_hand
+                            width: 3
+                            color: yellow #0xa6a6a6
+                            r_mod: -4
+                    - range_from: 1 # hours scale
+                      range_to: 12
+                      angle_range: 330
+                      rotation: 300
+                      ticks:
+                        width: 2
+                        count: 12
+                        length: 5
+                        color: red
+                    - range_from: 3 # hours scale for labels (3,6,9,12)
+                      range_to: 12
+                      angle_range: 270
+                      rotation: 0
+                      ticks:
+                        count: 10
+                        width: 0
+                        length: 0
+                        major:
+                          stride: 3
+                          width: 4
+                          length: 10
+                          color: blue
+                          label_gap: 10
+                    - range_from: 0 # hi-res hours scale for hand
+                      range_to: 720
+                      angle_range: 360
+                      rotation: 270
+                      ticks:
+                        count: 0
+                      indicators:
+                        - line:
+                            id: hours_hand
+                            width: 5
+                            color: yellow #0xa6a6a6
+                            r_mod: -15
+
+        - obj: # date, day of week container
+            width: 100%
+            height: 40
+            align: BOTTOM_MID
+            bg_color: black
+            border_width: 0
+            pad_all: 2
+            text_font: montserrat_28
+            widgets:
+              - label:
+                  id: day_label
+                  text_color: cyan
+                  align: BOTTOM_MID
+                  x: -45
+              - label:
+                  id: date_label
+                  text_color: magenta
+                  align: BOTTOM_MID
+                  x: +40
